@@ -28,8 +28,8 @@ from ceilometer.i18n import _
 from ceilometer import messaging
 from ceilometer import sample
 
-import socket
 import threading
+import etcd
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -73,14 +73,24 @@ EXCHANGES_OPTS = [
 
 # TODO: Cache the samples properly
 serverData = list()
+etcd_host = "192.168.122.13"
+etcd_port = 2379
+etcd_client = etcd.Client(host=etcd_host, port=etcd_port)
 
 class Server(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        for d in serverData:
-            self.wfile.write(bytes(d, "utf-8"))
+        #for d in serverData:
+        #    self.wfile.write(bytes(d, "utf-8"))
+        keys = etcd_client.get("/ceilometer/keys")
+        for key in keys.children:
+            try:
+                metric = etcd_client.get("/ceilometer/" + key.value).value
+                self.wfile.write(bytes(metric, "utf-8"))
+            except:
+                print("Key: " + key.value + " doesn't exist")
 
 class PrometheusExportService(cotyledon.Service):
     """Prometheus export service.
@@ -89,77 +99,23 @@ class PrometheusExportService(cotyledon.Service):
     def __init__(self, worker_id, conf, coordination_id=None):
         super(PrometheusExportService, self).__init__(worker_id)
         # TODO: parse these (and other) values from config
-        socket_port = 4209
         http_port = 4201
         print("STARTING")
 
         self.startup_delay = worker_id
         self.conf = conf
-        self.listeners = []
-        self.end = False
-
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(('', 4209))
-        self.listener = threading.Thread(target=self.run_listener)
 
         self.sender = threading.Thread(target=self.run_server)
         self.webServer = HTTPServer(("0.0.0.0", 4201), Server)
 
-    @staticmethod
-    def parse_sample(s):
-        print("PARSING")
-        data = ""
-        doc_done = set()
-        metric_type = None
-        if s["counter_type"] == sample.TYPE_CUMULATIVE:
-            metric_type = "counter"
-        elif s["counter_type"] == sample.TYPE_GAUGE:
-            metric_type = "gauge"
-
-        curated_sname = s["counter_name"].replace(".", "_")
-
-        if metric_type and curated_sname not in doc_done:
-            data += "# TYPE %s %s\n" % (curated_sname, metric_type)
-            doc_done.add(curated_sname)
-
-        # NOTE(jwysogla): should we uncomment this?
-        # NOTE(sileht): prometheus pushgateway doesn't allow to push
-        # timestamp_ms
-        #
-        # timestamp_ms = (
-        #     s.get_iso_timestamp().replace(tzinfo=None) -
-        #     datetime.utcfromtimestamp(0)
-        # ).total_seconds() * 1000
-        # data += '%s{resource_id="%s"} %s %d\n' % (
-        #     curated_sname, s.resource_id, s.volume, timestamp_ms)
-
-        data += '%s{resource_id="%s", project_id="%s"} %s\n' % (
-            curated_sname, s["resource_id"], s["project_id"], s["counter_volume"])
-        return data
-
-    def run_listener(self):
-        while not self.end:
-            message = ""
-            ready = [[]]
-            while not self.end and not ready[0]:
-                ready = select.select([self.socket], [], [], 5)
-            if ready[0]:
-                message = self.socket.recv(2048)
-                sample = msgpack.loads(message)
-                parsed = self.parse_sample(sample)
-                serverData.append(parsed)
 
     def run_server(self):
         self.webServer.serve_forever()
 
     def run(self):
-        self.listener.start()
         self.sender.start()
 
     def terminate(self):
-        self.end = True
-        self.socket.close()
-        self.listener.join()
         self.webServer.shutdown()
         self.webServer.server_close()
         self.sender.join()
