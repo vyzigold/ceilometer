@@ -16,7 +16,7 @@
 from ceilometer import sample
 import ceilometer
 from ceilometer import publisher
-from urllib import parse as urlparse
+from urllib import parse
 from oslo_log import log
 
 import etcd
@@ -53,7 +53,7 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
         parsed_url.port
 
         # Handling other configuration options in the query string
-        params = urlparse.parse_qs(parsed_url.query)
+        params = parse.parse_qs(parsed_url.query)
         self.timeout = self._get_param(params, 'timeout', 5, int)
         self.max_retries = self._get_param(params, 'max_retries', 2, int)
         self.etcd_client = etcd.Client(host=parsed_url.hostname,
@@ -108,8 +108,8 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
             data = '%s{resource_id="%s", project_id="%s"} %s\n' % (
                 curated_sname, s.resource_id, s.project_id, s.volume)
             key = self.get_metric_key(s)
-            self.etcd_client.write("/ceilometer2/" + key, data)
-            self.etcd_client.write("/ceilometer2/keys", key, append=True)
+            self.etcd_client.write("/ceilometer/" + key, data)
+            self.etcd_client.write("/ceilometer/keys", key, append=True)
 
 
     @staticmethod
