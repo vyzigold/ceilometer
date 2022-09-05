@@ -71,8 +71,7 @@ EXCHANGES_OPTS = [
                     help="Exchanges name to listen for notifications."),
 ]
 
-# TODO: Cache the samples properly
-serverData = list()
+# TODO: move this to Server
 etcd_host = "192.168.122.13"
 etcd_port = 2379
 etcd_client = etcd.Client(host=etcd_host, port=etcd_port)
@@ -82,15 +81,15 @@ class Server(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        #for d in serverData:
-        #    self.wfile.write(bytes(d, "utf-8"))
-        keys = etcd_client.get("/ceilometer/keys")
-        for key in keys.children:
-            try:
-                metric = etcd_client.get("/ceilometer/" + key.value).value
-                self.wfile.write(bytes(metric, "utf-8"))
-            except:
-                print("Key: " + key.value + " doesn't exist")
+
+        root = etcd_client.get("/ceilometer")
+        for metric_name in root.children:
+            metric_type = etcd_client.get(metric_name.key + "/type").value
+            self.wfile.write(bytes(metric_type, "utf-8"))
+
+            data = etcd_client.get(metric_name.key + "/data")
+            for d in data.children:
+                self.wfile.write(bytes(d.value, "utf-8"))
 
 class PrometheusExportService(cotyledon.Service):
     """Prometheus export service.
@@ -100,7 +99,6 @@ class PrometheusExportService(cotyledon.Service):
         super(PrometheusExportService, self).__init__(worker_id)
         # TODO: parse these (and other) values from config
         http_port = 4201
-        print("STARTING")
 
         self.startup_delay = worker_id
         self.conf = conf

@@ -20,13 +20,12 @@ from urllib import parse
 from oslo_log import log
 
 import etcd
+from datetime import datetime
 
 LOG = log.getLogger(__name__)
 
 class EtcdPublisher(publisher.ConfigPublisherBase):
-    """Publish metering data to Prometheus Pushgateway endpoint
-
-    This dispatcher inherits from all options of the http dispatcher.
+    """Publish metering data to etcd
 
     To use this publisher for samples, add the following section to the
     /etc/ceilometer/pipeline.yaml file or simply add it to an existing
@@ -36,8 +35,15 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
             meters:
                 - "*"
             publishers:
-                - etcd://host:2379?timeout=1
+                - etcd://host:port?expiration=1
 
+    Following directory structure is created inside etcd:
+    /ceilometer/<metric_name>/timestamp/<concatenated_metric_labels>
+        - when the metric was read
+    /ceilometer/<metric_name>/data/<concatenated_metric_labels>
+        - a string representing the metric in prometheus compatible syntax
+    /ceilometer/<metric_name>/type
+        - a string representing the type in prometheus compatible syntax
     """
 
     def __init__(self, conf, parsed_url):
@@ -52,10 +58,8 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
         # is valid, if not, ValueError will be thrown.
         parsed_url.port
 
-        # Handling other configuration options in the query string
         params = parse.parse_qs(parsed_url.query)
-        self.timeout = self._get_param(params, 'timeout', 5, int)
-        self.max_retries = self._get_param(params, 'max_retries', 2, int)
+        self.expiration = self._get_param(params, 'expiration', 60, int)
         self.etcd_client = etcd.Client(host=parsed_url.hostname,
                 port=parsed_url.port)
 
@@ -73,15 +77,29 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
 
     @staticmethod
     def get_metric_key(s):
-        return '%s%s%s' % (s.name, s.resource_id, s.project_id)
+        return '%s%s' % (s.resource_id, s.project_id)
+
+    def update_key(self, location, key):
+        print("UPDATING")
+        print(location)
+        print(key)
+        existing_keys = self.etcd_client.get("location")
+        keys_list = [i.value for i in existing_keys.children]
+        if key not in keys_list:
+            self.etcd_client.write("location", key, append=True, ttl=self.expiration)
+        else:
+            self.etcd_client.refresh(existing_keys.children[keys_list.index(key)].key, ttl=self.expiration)
 
     def publish_samples(self, samples):
+        """Send a metering message for publishing
+
+        :param samples: Samples from pipeline after transformation
+        """
         if not samples:
             return
-        data = ""
-        doc_done = set()
 
         for s in samples:
+            data = ""
             metric_type = None
             if s.type == sample.TYPE_CUMULATIVE:
                 metric_type = "counter"
@@ -90,27 +108,30 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
 
             curated_sname = s.name.replace(".", "_")
 
-            if metric_type and curated_sname not in doc_done:
-                data += "# TYPE %s %s\n" % (curated_sname, metric_type)
-                doc_done.add(curated_sname)
+            metric_type = "# TYPE %s %s\n" % (curated_sname, metric_type)
 
-            # NOTE(jwysogla): should we uncomment this?
-            # NOTE(sileht): prometheus pushgateway doesn't allow to push
-            # timestamp_ms
-            #
-            # timestamp_ms = (
-            #     s.get_iso_timestamp().replace(tzinfo=None) -
-            #     datetime.utcfromtimestamp(0)
-            # ).total_seconds() * 1000
-            # data += '%s{resource_id="%s"} %s %d\n' % (
-            #     curated_sname, s.resource_id, s.volume, timestamp_ms)
+            timestamp_ms = (
+                s.get_iso_timestamp().replace(tzinfo=None) -
+                datetime.utcfromtimestamp(0)
+            ).total_seconds() * 1000
+            data += '%s{resource_id="%s", project_id="%s"} %s %d\n' % (
+                curated_sname, s.resource_id, s.project_id, s.volume, timestamp_ms)
 
-            data = '%s{resource_id="%s", project_id="%s"} %s\n' % (
-                curated_sname, s.resource_id, s.project_id, s.volume)
+#            data += '%s{resource_id="%s", project_id="%s"} %s\n' % (
+#                curated_sname, s.resource_id, s.project_id, s.volume)
             key = self.get_metric_key(s)
-            self.etcd_client.write("/ceilometer/" + key, data)
-            self.etcd_client.write("/ceilometer/keys", key, append=True)
 
+            # don't write older metric
+            try:
+                ts = self.etcd_client.get("/ceilometer/" + curated_sname + "/timestamp/" + key).value
+                if ts > timestamp_ms:
+                    continue
+            except etcd.EtcdKeyNotFound:
+                pass
+            self.etcd_client.write("/ceilometer/" + curated_sname + "/type", metric_type, ttl=self.expiration)
+            self.etcd_client.write("/ceilometer/" + curated_sname + "/data/" + key, data, ttl=self.expiration)
+            self.etcd_client.write("/ceilometer/" + curated_sname + "/timestamp/" + key, timestamp_ms, ttl=self.expiration)
+            self.etcd_client.refresh("/ceilometer/" + curated_sname, ttl=self.expiration)
 
     @staticmethod
     def publish_events(events):
