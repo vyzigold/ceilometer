@@ -26,7 +26,7 @@ def main():
     conf = service.prepare_service()
 
     sm = cotyledon.ServiceManager()
-    sm.add(notification.NotificationService,
-           workers=conf.notification.workers, args=(conf,))
+    sm.add(prometheus_export.PrometheusExportService,
+           workers=1, args=(conf,))
     oslo_config_glue.setup(sm, conf)
     sm.run()
