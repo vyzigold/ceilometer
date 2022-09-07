@@ -23,6 +23,7 @@ from datetime import datetime
 
 LOG = log.getLogger(__name__)
 
+
 class EtcdPublisher(publisher.ConfigPublisherBase):
     """Publish metering data to etcd
 
@@ -60,7 +61,7 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
         params = parse.parse_qs(parsed_url.query)
         self.expiration = self._get_param(params, 'expiration', 60, int)
         self.etcd_client = etcd.Client(host=parsed_url.hostname,
-                port=parsed_url.port)
+                                       port=parsed_url.port)
 
         # Try to write to etcd to determine if the client is able to connect
         # with the provided host and port
@@ -87,17 +88,6 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
     def get_metric_key(s):
         return '%s%s' % (s.resource_id, s.project_id)
 
-    def update_key(self, location, key):
-        print("UPDATING")
-        print(location)
-        print(key)
-        existing_keys = self.etcd_client.get("location")
-        keys_list = [i.value for i in existing_keys.children]
-        if key not in keys_list:
-            self.etcd_client.write("location", key, append=True, ttl=self.expiration)
-        else:
-            self.etcd_client.refresh(existing_keys.children[keys_list.index(key)].key, ttl=self.expiration)
-
     def publish_samples(self, samples):
         """Send a metering message for publishing
 
@@ -123,21 +113,26 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
                 datetime.utcfromtimestamp(0)
             ).total_seconds() * 1000
             data += '%s{resource_id="%s", project_id="%s"} %s %d\n' % (
-                curated_sname, s.resource_id, s.project_id, s.volume, timestamp_ms)
+                curated_sname, s.resource_id, s.project_id,
+                s.volume, timestamp_ms)
 
             key = self.get_metric_key(s)
 
+            dir_name = "/ceilometer" + curated_sname
             # don't write older metric
             try:
-                ts = self.etcd_client.get("/ceilometer/" + curated_sname + "/timestamp/" + key).value
+                ts = self.etcd_client.get(dir_name + "/timestamp/" + key).value
                 if ts > timestamp_ms:
                     continue
             except etcd.EtcdKeyNotFound:
                 pass
-            self.etcd_client.write("/ceilometer/" + curated_sname + "/data/" + key, data, ttl=self.expiration)
-            self.etcd_client.write("/ceilometer/" + curated_sname + "/timestamp/" + key, timestamp_ms, ttl=self.expiration)
-            self.etcd_client.write("/ceilometer/" + curated_sname + "/type", metric_type, ttl=self.expiration)
-            self.etcd_client.refresh("/ceilometer/" + curated_sname, ttl=self.expiration)
+            self.etcd_client.write(dir_name + "/data/" + key, data,
+                                   ttl=self.expiration)
+            self.etcd_client.write(dir_name + "/timestamp/" + key,
+                                   timestamp_ms, ttl=self.expiration)
+            self.etcd_client.write(dir_name + "/type", metric_type,
+                                   ttl=self.expiration)
+            self.etcd_client.refresh(dir_name, ttl=self.expiration)
 
     @staticmethod
     def publish_events(events):

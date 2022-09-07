@@ -42,6 +42,7 @@ OPTS = [
                help='Port on which to serve metrics for prometheus to scrape')
 ]
 
+
 class PrometheusExportService(cotyledon.Service):
     """Prometheus export service.
     """
@@ -66,11 +67,32 @@ class PrometheusExportService(cotyledon.Service):
             LOG.error("Prometheus exporter cannot connect to etcd")
 
         self.sender = threading.Thread(target=self.run_server)
+        handler = self.get_handler(self.etcd_client, remove_after_scrape)
         self.webServer = HTTPServer(("0.0.0.0", http_port),
-                                    self.get_handler(self.etcd_client, remove_after_scrape))
+                                    handler)
 
     def get_handler(self, etcd_client, delete=False):
         class Handler(BaseHTTPRequestHandler):
+
+            def displayMetrics(self, root):
+                for metric_name in root.children:
+                    dir_name = metric_name.key
+                    try:
+                        metric_type = etcd_client.get(dir_name + "/type").value
+                        self.wfile.write(bytes(metric_type, "utf-8"))
+
+                        data = etcd_client.get(dir_name + "/data")
+                        for d in data.children:
+                            self.wfile.write(bytes(d.value, "utf-8"))
+                        if delete:
+                            self.etcd_client.delete(dir_name + "/data",
+                                                    recursive=True)
+                            self.etcd_client.delete(dir_name + "/timestamp",
+                                                    recursive=True)
+                    except etcd.EtcdKeyNotFound:
+                        LOG.warning("Couldn't get data from etcd for "
+                                    "metric named: " + dir_name)
+
             def do_GET(self):
                 if self.path == "/metrics":
                     self.send_response(200)
@@ -83,20 +105,7 @@ class PrometheusExportService(cotyledon.Service):
                     except etcd.EtcdKeyNotFound:
                         # There are no data in etcd, display an empty page
                         return
-                    for metric_name in root.children:
-                        try:
-                            metric_type = etcd_client.get(metric_name.key + "/type").value
-                            self.wfile.write(bytes(metric_type, "utf-8"))
-
-                            data = etcd_client.get(metric_name.key + "/data")
-                            for d in data.children:
-                                self.wfile.write(bytes(d.value, "utf-8"))
-                            if delete:
-                                self.etcd_client.delete(metric_name.key + "/data", recursive=True)
-                                self.etcd_client.delete(metric_name.key + "/timestamp", recursive=True)
-                        except etcd.EtcdKeyNotFound:
-                            LOG.warning("Couldn't get data from etcd for metric named: " + metric_name.key)
-
+                    self.displayMetrics(root)
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -106,7 +115,7 @@ class PrometheusExportService(cotyledon.Service):
         self.webServer.serve_forever()
 
     def run(self):
-        if self.error == False:
+        if self.error is False:
             self.sender.start()
 
     def terminate(self):
