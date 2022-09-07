@@ -18,7 +18,6 @@ import cotyledon
 from cotyledon import oslo_config_glue
 
 from ceilometer import notification
-from ceilometer import prometheus_export
 from ceilometer import service
 
 

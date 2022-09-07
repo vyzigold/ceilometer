@@ -37,6 +37,7 @@ import ceilometer.objectstore.rgw
 import ceilometer.objectstore.swift
 import ceilometer.pipeline.base
 import ceilometer.polling.manager
+import ceilometer.prometheus_export
 import ceilometer.publisher.messaging
 import ceilometer.publisher.utils
 import ceilometer.sample
@@ -100,6 +101,7 @@ def list_opts():
          itertools.chain(ceilometer.notification.OPTS,
                          ceilometer.notification.EXCHANGES_OPTS)),
         ('polling', ceilometer.polling.manager.POLLING_OPTS),
+        ('prometheus_exporter', ceilometer.prometheus_export.OPTS),
         ('publisher', ceilometer.publisher.utils.OPTS),
         ('publisher_notifier', ceilometer.publisher.messaging.NOTIFIER_OPTS),
         ('rgw_admin_credentials', ceilometer.objectstore.rgw.CREDENTIAL_OPTS),

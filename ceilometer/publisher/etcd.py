@@ -14,7 +14,6 @@
 # under the License.
 
 from ceilometer import sample
-import ceilometer
 from ceilometer import publisher
 from urllib import parse
 from oslo_log import log
@@ -62,6 +61,15 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
         self.expiration = self._get_param(params, 'expiration', 60, int)
         self.etcd_client = etcd.Client(host=parsed_url.hostname,
                 port=parsed_url.port)
+
+        # Try to write to etcd to determine if the client is able to connect
+        # with the provided host and port
+
+        try:
+            self.etcd_client.write("/ceilometer/test", test, ttl=1)
+        except etcd.EtcdConnectionFailed:
+            raise ValueError('Cannot connect to etcd using the '
+                             'provided host and port values')
 
         LOG.debug('EtcdPublisher for endpoint %s is initialized!' %
                   parsed_url.hostname)
@@ -117,8 +125,6 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
             data += '%s{resource_id="%s", project_id="%s"} %s %d\n' % (
                 curated_sname, s.resource_id, s.project_id, s.volume, timestamp_ms)
 
-#            data += '%s{resource_id="%s", project_id="%s"} %s\n' % (
-#                curated_sname, s.resource_id, s.project_id, s.volume)
             key = self.get_metric_key(s)
 
             # don't write older metric
@@ -128,9 +134,9 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
                     continue
             except etcd.EtcdKeyNotFound:
                 pass
-            self.etcd_client.write("/ceilometer/" + curated_sname + "/type", metric_type, ttl=self.expiration)
             self.etcd_client.write("/ceilometer/" + curated_sname + "/data/" + key, data, ttl=self.expiration)
             self.etcd_client.write("/ceilometer/" + curated_sname + "/timestamp/" + key, timestamp_ms, ttl=self.expiration)
+            self.etcd_client.write("/ceilometer/" + curated_sname + "/type", metric_type, ttl=self.expiration)
             self.etcd_client.refresh("/ceilometer/" + curated_sname, ttl=self.expiration)
 
     @staticmethod
