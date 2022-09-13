@@ -49,7 +49,6 @@ class PrometheusExportService(cotyledon.Service):
 
     def __init__(self, worker_id, conf, coordination_id=None):
         super(PrometheusExportService, self).__init__(worker_id)
-        self.error = False
         self.conf = conf
 
         etcd_host = conf.prometheus_exporter.etcd_host
@@ -61,13 +60,13 @@ class PrometheusExportService(cotyledon.Service):
 
         # verify the client can connect to etcd
         try:
-            self.etcd_client.write("/ceilometer/test", "test")
+            self.etcd_client.write("/ceilometer/test", "test", ttl=1)
         except etcd.EtcdConnectionFailed:
-            self.error = True
             LOG.error("Prometheus exporter cannot connect to etcd")
 
         self.sender = threading.Thread(target=self.run_server)
-        handler = self.get_handler(self.etcd_client, remove_after_scrape)
+        handler = self.get_handler(self.etcd_client,
+                                   remove_after_scrape)
         self.webServer = HTTPServer(("0.0.0.0", http_port),
                                     handler)
 
@@ -95,16 +94,22 @@ class PrometheusExportService(cotyledon.Service):
 
             def do_GET(self):
                 if self.path == "/metrics":
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/plain")
-                    self.end_headers()
-
                     root = None
                     try:
                         root = etcd_client.get("/ceilometer")
                     except etcd.EtcdKeyNotFound:
                         # There are no data in etcd, display an empty page
                         return
+                    except etcd.EtcdConnectionFailed:
+                        LOG.error("Prometheus exporter cannot connect to etcd")
+                        self.send_response(500)
+                        self.end_headers()
+                        return
+
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/plain")
+                    self.end_headers()
+
                     self.displayMetrics(root)
                 else:
                     self.send_response(404)
@@ -115,8 +120,7 @@ class PrometheusExportService(cotyledon.Service):
         self.webServer.serve_forever()
 
     def run(self):
-        if self.error is False:
-            self.sender.start()
+        self.sender.start()
 
     def terminate(self):
         self.webServer.shutdown()
