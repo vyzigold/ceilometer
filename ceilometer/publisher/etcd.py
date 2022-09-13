@@ -18,10 +18,14 @@ from ceilometer import publisher
 from urllib import parse
 from oslo_log import log
 
-import etcd
+import redis
 from datetime import datetime
 
 LOG = log.getLogger(__name__)
+
+r = redis.Redis(
+        host='127.0.0.1',
+        port=6379)
 
 
 class EtcdPublisher(publisher.ConfigPublisherBase):
@@ -60,17 +64,10 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
 
         params = parse.parse_qs(parsed_url.query)
         self.expiration = self._get_param(params, 'expiration', 60, int)
-        self.etcd_client = etcd.Client(host=parsed_url.hostname,
-                                       port=parsed_url.port)
 
         # Try to write to etcd to determine if the client is able to connect
         # with the provided host and port
 
-        try:
-            self.etcd_client.write("/ceilometer/test", test, ttl=1)
-        except etcd.EtcdConnectionFailed:
-            raise ValueError('Cannot connect to etcd using the '
-                             'provided host and port values')
 
         LOG.debug('EtcdPublisher for endpoint %s is initialized!' %
                   parsed_url.hostname)
@@ -85,8 +82,8 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
             return default_value
 
     @staticmethod
-    def get_metric_key(s):
-        return '%s%s' % (s.resource_id, s.project_id)
+    def get_metric_key(curated_sname, s):
+        return '%s%s%s' % (curated_sname, s.resource_id, s.project_id)
 
     def publish_samples(self, samples):
         """Send a metering message for publishing
@@ -116,23 +113,28 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
                 curated_sname, s.resource_id, s.project_id,
                 s.volume, timestamp_ms)
 
-            key = self.get_metric_key(s)
+            # "ceilometer_metric_names" - list of all curated_snames
+            # "ceilometer_<metric_name>_type" - type of the metric in prometheus format
+            # "ceilometer_<metric_name>_keys" - list of keys of that metric (same name, different labels)
+            # "ceilometer_<key_from_above>" - metric in prometheus format
+            # "ceilometer_<key_from_above>_timestamp" - timestamp of that metric
 
-            dir_name = "/ceilometer" + curated_sname
+            key = self.get_metric_key(curated_sname, s)
+
+            if r.lpos("ceilometer_metric_names", curated_sname) is None:
+                r.lpush("ceilometer_metric_names", curated_sname)
+            r.set("ceilometer_" + curated_sname + "_type", metric_type)
+            if r.lpos("ceilometer_" + curated_sname + "_keys", key) is None:
+                r.lpush("ceilometer_" + curated_sname + "_keys", key)
+            previous_ts = r.get("ceilometer_" + key + "_timestamp")
             # don't write older metric
-            try:
-                ts = self.etcd_client.get(dir_name + "/timestamp/" + key).value
-                if ts > timestamp_ms:
-                    continue
-            except etcd.EtcdKeyNotFound:
-                pass
-            self.etcd_client.write(dir_name + "/data/" + key, data,
-                                   ttl=self.expiration)
-            self.etcd_client.write(dir_name + "/timestamp/" + key,
-                                   timestamp_ms, ttl=self.expiration)
-            self.etcd_client.write(dir_name + "/type", metric_type,
-                                   ttl=self.expiration)
-            self.etcd_client.refresh(dir_name, ttl=self.expiration)
+            if previous_ts is not None and previous_ts > timestamp_ms:
+                continue
+            # use r.setex(key, time, value) for expiration
+            r.set("ceilometer_" + key, data)
+            r.set("ceilometer_" + key + "_timestamp", timestamp_ms)
+
+            # cleanup the lists when the receiving side finds out, that the keys expired? So not here?
 
     @staticmethod
     def publish_events(events):
