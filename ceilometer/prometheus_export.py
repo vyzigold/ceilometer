@@ -21,7 +21,7 @@ from oslo_log import log
 from ceilometer.i18n import _
 
 import threading
-import etcd
+import redis
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -42,6 +42,9 @@ OPTS = [
                help='Port on which to serve metrics for prometheus to scrape')
 ]
 
+r = redis.Redis(
+        host='127.0.0.1',
+        port=6379)
 
 class PrometheusExportService(cotyledon.Service):
     """Prometheus export service.
@@ -56,64 +59,37 @@ class PrometheusExportService(cotyledon.Service):
         http_port = conf.prometheus_exporter.http_port
         remove_after_scrape = conf.prometheus_exporter.remove_after_scrape
 
-        self.etcd_client = etcd.Client(host=etcd_host, port=etcd_port)
-
-        # verify the client can connect to etcd
-        try:
-            self.etcd_client.write("/ceilometer/test", "test", ttl=1)
-        except etcd.EtcdConnectionFailed:
-            LOG.error("Prometheus exporter cannot connect to etcd")
 
         self.sender = threading.Thread(target=self.run_server)
-        handler = self.get_handler(self.etcd_client,
+        handler = self.get_handler(
                                    remove_after_scrape)
         self.webServer = HTTPServer(("0.0.0.0", http_port),
                                     handler)
 
-    def get_handler(self, etcd_client, delete=False):
+    def get_handler(self, delete=False):
         class Handler(BaseHTTPRequestHandler):
 
-            def displayMetrics(self, root):
-                for metric_name in root.children:
-                    dir_name = metric_name.key
-                    try:
-                        metric_type = etcd_client.get(dir_name + "/type").value
-                        self.wfile.write(bytes(metric_type, "utf-8"))
-
-                        data = etcd_client.get(dir_name + "/data")
-                        for d in data.children:
-                            self.wfile.write(bytes(d.value, "utf-8"))
-                        if delete:
-                            self.etcd_client.delete(dir_name + "/data",
-                                                    recursive=True)
-                            self.etcd_client.delete(dir_name + "/timestamp",
-                                                    recursive=True)
-                    except etcd.EtcdKeyNotFound:
-                        LOG.warning("Couldn't get data from etcd for "
-                                    "metric named: " + dir_name)
+            def displayMetrics(self):
+                metric_names = r.lrange("ceilometer_metric_names", 0, -1)
+                for name in metric_names:
+                    name_str = name.decode("utf-8")
+                    metric_type = r.get("ceilometer_" + name_str + "_type")
+                    self.wfile.write(metric_type)
+                    keys = r.lrange("ceilometer_" + name_str + "_keys", 0, -1)
+                    for key in keys:
+                        metric = r.get("ceilometer_" + key.decode("utf-8"))
+                        if metric is None:
+                            # delete old key from the list
+                            r.lrem("ceilometer_" + name_str + "_keys", 1, key.decode("utf-8"))
+                        else:
+                            self.wfile.write(metric)
 
             def do_GET(self):
-                if self.path == "/metrics":
-                    root = None
-                    try:
-                        root = etcd_client.get("/ceilometer")
-                    except etcd.EtcdKeyNotFound:
-                        # There are no data in etcd, display an empty page
-                        return
-                    except etcd.EtcdConnectionFailed:
-                        LOG.error("Prometheus exporter cannot connect to etcd")
-                        self.send_response(500)
-                        self.end_headers()
-                        return
+                self.send_response(200)
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
 
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/plain")
-                    self.end_headers()
-
-                    self.displayMetrics(root)
-                else:
-                    self.send_response(404)
-                    self.end_headers()
+                self.displayMetrics()
         return Handler
 
     def run_server(self):
