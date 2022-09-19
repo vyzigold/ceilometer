@@ -128,11 +128,13 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
                 r.lpush("ceilometer_" + curated_sname + "_keys", key)
             previous_ts = r.get("ceilometer_" + key + "_timestamp")
             # don't write older metric
-            if previous_ts is not None and previous_ts > timestamp_ms:
+            if previous_ts is not None and int(float(previous_ts)) > timestamp_ms:
                 continue
-            # use r.setex(key, time, value) for expiration
-            r.set("ceilometer_" + key, data)
-            r.set("ceilometer_" + key + "_timestamp", timestamp_ms)
+
+            pipe = r.pipeline()
+            pipe.setex("ceilometer_" + key, 300, data)
+            pipe.setex("ceilometer_" + key + "_timestamp", 300, timestamp_ms)
+            pipe.execute()
 
             # cleanup the lists when the receiving side finds out, that the keys expired? So not here?
 
