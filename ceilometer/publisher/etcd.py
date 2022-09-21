@@ -67,7 +67,7 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
         # with the provided host and port
 
         try:
-            self.etcd_client.write("/ceilometer/test", test, ttl=1)
+            self.etcd_client.write("/ceilometer/test", "test", ttl=1)
         except etcd.EtcdConnectionFailed:
             raise ValueError('Cannot connect to etcd using the '
                              'provided host and port values')
@@ -118,7 +118,7 @@ class EtcdPublisher(publisher.ConfigPublisherBase):
 
             key = self.get_metric_key(s)
 
-            dir_name = "/ceilometer" + curated_sname
+            dir_name = "/ceilometer/" + curated_sname
             # don't write older metric
             try:
                 ts = self.etcd_client.get(dir_name + "/timestamp/" + key).value
