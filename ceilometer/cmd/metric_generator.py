@@ -80,7 +80,7 @@ def _prepare_config():
 def create_polling_service(worker_id, conf=None):
     if conf is None:
         conf = _prepare_config()
-        conf.log_opt_values(LOG, log.DEBUG)
+        conf.log_opt_values(LOG, log.ERROR)
     return manager.AgentManager(worker_id, conf, conf.polling_namespaces)
 
 
@@ -91,18 +91,18 @@ def send_sample():
 
     # Set up logging to use the console
     console = logging.StreamHandler(sys.stderr)
-    console.setLevel(logging.DEBUG)
+    console.setLevel(logging.ERROR)
     formatter = logging.Formatter('%(message)s')
     console.setFormatter(formatter)
     root_logger = logging.getLogger('')
     root_logger.addHandler(console)
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(logging.ERROR)
 
     conf = _prepare_config()
     pipeline_manager = sample_pipe.SamplePipelineManager(conf)
 
     with pipeline_manager.publisher() as p:
-        for i in range(3, 20):
+        for i in range(0, 20):
             p([sample.Sample(
                 name="test_name" + str(i),
                 type="test_type",
