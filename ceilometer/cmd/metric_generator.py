@@ -27,6 +27,8 @@ from ceilometer.pipeline import sample as sample_pipe
 from ceilometer import sample
 from ceilometer import service
 
+from datetime import datetime
+
 class MultiChoicesOpt(cfg.Opt):
     def __init__(self, name, choices=None, **kwargs):
         super(MultiChoicesOpt, self).__init__(
@@ -101,18 +103,36 @@ def send_sample():
     conf = _prepare_config()
     pipeline_manager = sample_pipe.SamplePipelineManager(conf)
 
+    # until stopped generates metrics in the following way:
+    # 
+    # 5 000 000 unique (1000 names * 5000 labels) metrics are generated
+    # 200 metrics are generated for a name at once before moving to the next name
+    # when each name has 200 metrics it goes back to the first name
+    # and generates another 200 metrics, this happens 25 times,
+    # Then it starts over with the same names and labels, but different
+    # values and timestamps
+
+    metrics_sent = 0
+
     with pipeline_manager.publisher() as p:
-        for i in range(0, 20):
-            p([sample.Sample(
-                name="test_name" + str(i),
-                type="test_type",
-                unit="test_unit",
-                volume=2063,
-                user_id="test_user_id",
-                project_id="test_project_id",
-                resource_id="test_resource_id",
-                timestamp="2022-09-15T21:00:51+00:00",
-                resource_metadata="test_resource_metadata")])
+        while True:
+            for i in range(0, 25):
+                first_label = i * 200
+                for name in range(0, 1000):
+                    for proj_id in range(first_label, first_label + 200):
+                        time_now = datetime.now()
+                        ts = datetime.timestamp(time_now)
+                        p([sample.Sample(
+                            name="test_name_" + str(i),
+                            type="test_type",
+                            unit="test_unit",
+                            volume=metrics_sent,
+                            user_id="test_user_id",
+                            project_id="test_project_id_" + str(proj_id),
+                            resource_id="test_resource_id",
+                            timestamp=str(time_now),
+                            resource_metadata="test_resource_metadata")])
+                        metrics_sent += 1
 
 send_sample()
 
