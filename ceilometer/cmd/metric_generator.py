@@ -19,6 +19,7 @@
 """
 import logging
 import sys
+import random
 
 from oslo_config import cfg
 from oslo_utils import timeutils
@@ -113,26 +114,32 @@ def send_sample():
     # values and timestamps
 
     metrics_sent = 0
+    names = 200
+    labels_per_batch = 200
+    batch_count = 5
+    rand = random.randrange(1, 100)
 
     with pipeline_manager.publisher() as p:
-        while True:
-            for i in range(0, 25):
-                first_label = i * 200
-                for name in range(0, 1000):
-                    for proj_id in range(first_label, first_label + 200):
-                        time_now = datetime.now()
-                        ts = datetime.timestamp(time_now)
-                        p([sample.Sample(
-                            name="test_name_" + str(i),
-                            type="test_type",
-                            unit="test_unit",
-                            volume=metrics_sent,
-                            user_id="test_user_id",
-                            project_id="test_project_id_" + str(proj_id),
-                            resource_id="test_resource_id",
-                            timestamp=str(time_now),
-                            resource_metadata="test_resource_metadata")])
-                        metrics_sent += 1
+        j = 0
+#        while True:
+        for i in range(0, batch_count):
+            first_label = i * labels_per_batch
+            for name in range(0, names):
+                for proj_id in range(first_label, first_label + labels_per_batch):
+                    time_now = datetime.now()
+                    ts = datetime.timestamp(time_now)
+                    p([sample.Sample(
+                        name="test_name_" + str(name) + "_" + str(j) + "_" + str(rand),
+                        type="test_type",
+                        unit="test_unit",
+                        volume=metrics_sent,
+                        user_id="test_user_id",
+                        project_id="test_project_id_" + str(proj_id),
+                        resource_id="test_resource_id",
+                        timestamp=str(time_now),
+                        resource_metadata="test_resource_metadata")])
+                    metrics_sent += 1
+        j += 1
 
 send_sample()
 
