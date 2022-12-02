@@ -52,7 +52,7 @@ class TCPPublisher(publisher.ConfigPublisherBase):
                 self.host)
             self.addr_family = socket.AF_INET
         self.create_and_connect()
-        
+
     def create_and_connect(self):
         self.socket = socket.socket(self.addr_family,
                                     socket.SOCK_STREAM)
@@ -73,17 +73,18 @@ class TCPPublisher(publisher.ConfigPublisherBase):
                       "%(host)s:%(port)d", {'msg': msg, 'host': host,
                                             'port': port})
             encoded_msg = msgpack.dumps(msg, use_bin_type=True)
-            msg_len = len(encoded_msg)
+            msg_len = len(encoded_msg).to_bytes(8, 'little')
             try:
-                self.socket.send(msg_len.to_bytes(8, 'little') + encoded_msg)
-            except Exception as e:
+                self.socket.send(msg_len + encoded_msg)
+            except Exception:
                 LOG.warning(_("Unable to send sample over TCP,"
-                    "trying to reconnect and resend the message"))
+                              "trying to reconnect and resend the message"))
                 self.create_and_connect()
                 try:
-                    self.socket.send(msg_len.to_bytes(8, 'little') + encoded_msg)
+                    self.socket.send(msg_len + encoded_msg)
                 except Exception as e:
-                    LOG.warning(_("Unable to reconnect and resend sample over TCP"))
+                    LOG.warning(_("Unable to reconnect and resend"
+                                  "sample over TCP"))
                     LOG.exception(e)
 
     def publish_events(self, events):

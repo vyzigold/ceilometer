@@ -114,7 +114,7 @@ def verify_signature(message, secret):
     return secretutils.constant_time_compare(new_sig, old_sig)
 
 
-def meter_message_from_counter(sample, secret, publisher_id = None):
+def meter_message_from_counter(sample, secret, publisher_id=None):
     """Make a metering message ready to be published or stored.
 
     Returns a dictionary containing a metering message
