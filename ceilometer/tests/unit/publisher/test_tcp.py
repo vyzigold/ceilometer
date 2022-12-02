@@ -137,7 +137,9 @@ class TestTCPPublisher(base.BaseTestCase):
         def sort_func(counter):
             return counter['counter_name']
 
-        counters = [utils.meter_message_from_counter(d, "not-so-secret", publisher.conf.host)
+        counters = [utils.meter_message_from_counter(d,
+                                                     "not-so-secret",
+                                                     publisher.conf.host)
                     for d in self.test_data]
         counters.sort(key=sort_func)
         sent_counters.sort(key=sort_func)
@@ -148,7 +150,7 @@ class TestTCPPublisher(base.BaseTestCase):
         def _fake_socket_socket(family, type):
             def record_data(msg):
                 if len(published) == len(connections) - 1:
-                    # Raise for every each first send attempt to 
+                    # Raise for every each first send attempt to
                     # trigger a reconnection attempt and send the data
                     # correctly after reconnecting
                     raise IOError
@@ -191,7 +193,9 @@ class TestTCPPublisher(base.BaseTestCase):
         def sort_func(counter):
             return counter['counter_name']
 
-        counters = [utils.meter_message_from_counter(d, "not-so-secret", publisher.conf.host)
+        counters = [utils.meter_message_from_counter(d,
+                                                     "not-so-secret",
+                                                     publisher.conf.host)
                     for d in self.test_data]
         counters.sort(key=sort_func)
         sent_counters.sort(key=sort_func)
