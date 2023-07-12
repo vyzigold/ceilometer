@@ -83,8 +83,8 @@ class TCPPublisher(publisher.ConfigPublisherBase):
             except Exception:
                 LOG.error(_("Unable to send sample over TCP,"
                           "trying to reconnect and resend the message"))
-                self.create_and_connect()
                 try:
+                    self.create_and_connect()
                     self.socket.send(msg_len + encoded_msg)
                 except Exception:
                     LOG.exception(_("Unable to reconnect and resend"

@@ -150,7 +150,7 @@ class TestTCPPublisher(base.BaseTestCase):
         def _fake_socket_socket(family, type):
             def record_data(msg):
                 if len(published) == len(connections) - 1:
-                    # Raise for every each first send attempt to
+                    # Raise for every first send attempt to
                     # trigger a reconnection attempt and send the data
                     # correctly after reconnecting
                     raise IOError
@@ -200,6 +200,41 @@ class TestTCPPublisher(base.BaseTestCase):
         counters.sort(key=sort_func)
         sent_counters.sort(key=sort_func)
         self.assertEqual(counters, sent_counters)
+
+    @staticmethod
+    def _make_disconnected_socket(connections):
+        def _fake_socket_socket(family, type):
+            def record_data(msg):
+                raise IOError
+
+            def record_connection(dest):
+                connections.append(dest)
+                raise IOError
+
+            tcp_socket = mock.Mock()
+            tcp_socket.send = record_data
+            tcp_socket.connect = record_connection
+            return tcp_socket
+
+        return _fake_socket_socket
+
+    def test_failed_reconnect(self):
+        self.connections = []
+        with mock.patch('socket.socket',
+                        self._make_disconnected_socket(self.connections)):
+            publisher = tcp.TCPPublisher(
+                self.CONF,
+                netutils.urlsplit('tcp://somehost'))
+            publisher.publish_samples(self.test_data)
+
+        sent_counters = []
+
+        for connection in self.connections:
+            # Check destination
+            self.assertEqual(('somehost', 4952), connection)
+        # Check, that the socket really tried to reconnect
+        # with each sample + the initial connection attempt.
+        self.assertEqual(len(self.connections) - 1, len(self.test_data))
 
     @staticmethod
     def _raise_ioerror(*args):
